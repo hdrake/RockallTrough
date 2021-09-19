@@ -1,5 +1,7 @@
 data/interim
 data/raw
+data/strategies/testing*
 
+.DS_Store
 __pycache__
 .ipynb_checkpoints

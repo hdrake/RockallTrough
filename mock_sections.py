@@ -3,22 +3,40 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import os.path
-
-import xmitgcm as xmit
-import xarray as xr
+import pandas as pd
 
 from utils import *
 
 ds = load_all_data()
 
-fig, axes = plt.subplots(1,2, figsize=(13, 7))
-ax = axes[0]
+df = pd.DataFrame({"castnum": [], "time": [], "Z":  [], "dZ": [], "c": [] })
 
-ds["Depth"].plot.contour(ax=ax, levels=np.arange(0, 4000, 500), cmap="Greys", alpha=0.3)
-release = [-11.895, 54.233]
-ax.plot(release[0], release[1], "C3x", markersize=10)
+fig = plt.figure(figsize=(13, 7))
+ax = plt.axes([0.075, 0.2, 0.595, 0.75])
 
+pc = ds["c_Zint"].isel(time=-1).plot(
+    ax=ax, alpha=1., cmap = plt.get_cmap("Purples"),
+    norm = matplotlib.colors.LogNorm(vmin=3e-12, vmax=3e-9)
+)
+pc.colorbar.remove()
+ds["Depth"].plot.contour(ax=ax, levels=np.arange(-500, 4000, 500), cmap="Greys", alpha=0.6)
+ax.set_xlabel("longitude [degrees east]")
+ax.set_ylabel("latitude [degrees north]")
+release = (-11.895, 54.233)
+ax.plot(release[0], release[1], "C3x", markersize=13, markeredgewidth=2.75, markeredgecolor="C3")
+ann = ax.annotate(f"elapsed time: 0.0 days", xy=(-12.5, 53.6), fontsize=14.)
 hoverplot = ax.plot([],[])
+
+sax = plt.axes([0.65, 0.2, 0.32, 0.75])
+sax.set_ylim(-2500., -500.)
+
+sax.set_title("")
+sax.set_xlabel(r"tracer concentration [kg/m$^{3}$]")
+sax.set_ylabel(r"depth [m]")
+
+cax = plt.axes([0.075, 0.085, 0.4775, 0.03])
+plt.colorbar(pc, cax=cax, label=r"vertically-integrated tracer [kg / m$^{2}$]", orientation="horizontal")
+pc.set(alpha=0.)
 
 # Enter username
 name = input("Please enter your full name: ")
@@ -38,63 +56,90 @@ else:
 	print("Please enter a strictly positive integer.")
 	exit()
 
-ax.set_title(f"You have {N} casts left!", loc="left")
+ax.set_title(f"You have {N} casts left!", loc="left", fontsize=14)
 ax.grid(alpha=0.2)
 ax.set_title("")
 ax.set_ylim(53.5, 57)
 ax.set_xlim(-15.2, -10.305)
-axes[1].set_title("")
+sax.set_title("")
 
 class PatternCanvas:
 	def __init__(self, fig):
 		self.fig = fig
-		self.ax = fig.axes[0]
+		self.ax = ax
+		self.sax = sax
+		self.cax = cax
 		self.hoverplot = hoverplot
+		self.paused = False
 
-		self.N = N
+		self.last_xy = release
+		self.cast_duration = 5.
+		self.speed = 5./86400.
+
+		self.cast_num = 0
+		self.elapsed_time = 0.
 		self.name = name
+		self.df = df
 
 	def connect(self):
 		self.cid_button = self.fig.canvas.mpl_connect('button_press_event', self.onclick)
-		#self.cid_key = self.fig.canvas.mpl_connect('key_press_event', self.onkey)
+		self.cid_key = self.fig.canvas.mpl_connect('key_press_event', self.onkey)
 		self.cid_close = self.fig.canvas.mpl_connect('close_event', self.onclose)
 		self.cid_hover = self.fig.canvas.mpl_connect("motion_notify_event", self.onhover)
 	
 	# Click event handler: toggle cells
 	def onclick(self, event):
-		if event.inaxes == self.ax:
+		if (event.inaxes == self.ax) and (~self.paused):
 			x = event.xdata
 			y = event.ydata
-			print(f"Cast {self.N}: ({np.round(x,3)}, {np.round(y,3)})")
-			self.N -= 1
+			self.cast_num += 1
+			self.elapsed_time += self.cast_duration + self.speed*self.steaming_distance(x,y)
+			print(f"Cast {self.cast_num}: ({np.round(x,3)}, {np.round(y,3)})")
+
+			ann.set_text(f"elapsed time: {round(self.elapsed_time/24.,1)} days")
 			
-			sax = axes[1]
 			sample = ds.isel(time=-1).sel(XC=x, YC=y, method="nearest")
-			ax.scatter(
+			self.ax.scatter(
 				sample["XC"],
 				sample["YC"],
-				s = 40,
+				s = 60,
 				c = sample["c_Zint"],
 				cmap = plt.get_cmap("Purples"),
 				marker = "o",
 				edgecolors = "k",
-				linewidths = 1.5,
+				linewidths = 0.75,
 				norm = matplotlib.colors.LogNorm(vmin=3e-12, vmax=3e-9)
 			)
-			sample["c"].plot(ax=sax, y="Z")
-			ax.set_title(f"You have {self.N} casts left!", loc="left")
+			ax.plot([self.last_xy[0], x],[self.last_xy[1], y], "C1-", alpha=0.5, linewidth=1.25)
+			sample["c"].plot(ax=self.sax, y="Z")
+			self.sax.set_title("")
+			self.sax.set_xlabel(r"tracer concentration [kg/m$^{3}$]")
+			self.sax.set_ylabel(r"depth [m]")
+
+			self.ax.set_title(f"You have {N-self.cast_num} casts left!", loc="left")
+
+			sample_dict = {
+				"castnum": self.cast_num*xr.ones_like(sample["c"], dtype="int64"),
+				"time": sample["time"]*xr.ones_like(sample["c"]),
+				"Z": sample["Z"],
+				"dZ": sample["drF"],
+				"c": sample["c"]
+			}
+			sample_df = pd.DataFrame(data=sample_dict)
+			self.df = self.df.append(sample_df)
+			self.last_xy = (x,y)
 			plt.pause(0.001)
 
-			if self.N==0:
+			if self.cast_num==N:
 				self.end()
-				plt.pause(0.001)
+				plt.pause(0.002)
 
 	def onhover(self, event):
 		if event.inaxes == self.ax:
 			self.hovering = (event.xdata, event.ydata)
 			
 			self.hoverplot[0].remove()
-			self.hoverplot = ax.plot(
+			self.hoverplot = self.ax.plot(
 				self.hovering[0],
 				self.hovering[1],
 				markersize=14,
@@ -104,31 +149,50 @@ class PatternCanvas:
 			)
 			plt.pause(0.0002)
 
+	def onkey(self, event):
+		if event.key == 'p':
+			if self.paused:
+				print("Resuming.")
+			else:
+				print("Pausing.")
+			self.paused = ~self.paused
+
 	def onclose(self, event):
 		self.disconnect()
 
 	def end(self):
+		pc.set(alpha=1.0)
 		self.disconnect()
 
+		_name = name.replace(".", "").replace(" ", "_")
 		strategy_list = os.listdir("data/strategies/")
-		strategy_nums = [np.int64(n[-4:]) for n in strategy_list if (name in n)]
-		if ~os.path.exists(f"data/strategies/{name}"):
+		strategy_nums = [np.int64(n[-4:]) for n in strategy_list if (_name in n)]
+		if ~os.path.exists(f"data/strategies/{_name}"):
 			name_num = 0
 			if len(strategy_nums) > 0:
 				name_num = max(strategy_nums)+1
-			_name = name.replace(".", "").replace(" ", "_")
+			
 			save_path = f"data/strategies/{_name}_{str(name_num).zfill(4)}"
 			os.mkdir(save_path)
 			print(f"Thank you for playing! Your output is saved at: {save_path}")
 
+			# Save ouputs
+			self.df.to_csv(f"{save_path}/samples.csv")
+			self.fig.savefig(f"{save_path}/samples.png", dpi=100., bbox_inches="tight")
+
 		else:
 			print("Error!")
 
+	def steaming_distance(self, x, y):
+		Rearth = 6.378E6   # radius of Earth in meters
+		Δx = np.deg2rad(x-self.last_xy[0])*Rearth*np.cos(np.deg2rad((y + self.last_xy[1])/2))
+		Δy = np.deg2rad(y-self.last_xy[1])*Rearth
+		return np.sqrt(Δx**2 + Δy**2)
+
 	def disconnect(self):
 		self.fig.canvas.mpl_disconnect(self.cid_button)
-		self.fig.canvas.mpl_disconnect(self.cid_hover)
-        #self.fig.canvas.mpl_disconnect(self.cid_key)
-        #self.fig.canvas.mpl_disconnect(self.cid_close)
+		self.fig.canvas.mpl_disconnect(self.cid_key)
+		self.fig.canvas.mpl_disconnect(self.cid_close)
 
 pattern = PatternCanvas(fig)
 pattern.connect()
