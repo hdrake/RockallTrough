@@ -7,6 +7,13 @@ import pandas as pd
 
 from utils import *
 
+
+# Input parameters
+cast_duration = 5.
+ship_speed = 5./86400.
+show_solution = False
+
+#
 ds = load_all_data()
 
 df = pd.DataFrame({"castnum": [], "time": [], "Z":  [], "dZ": [], "c": [] })
@@ -25,11 +32,10 @@ ax.set_ylabel("latitude [degrees north]")
 release = (-11.895, 54.233)
 ax.plot(release[0], release[1], "C3x", markersize=13, markeredgewidth=2.75, markeredgecolor="C3")
 ann = ax.annotate(f"elapsed time: 0.0 days", xy=(-12.5, 53.6), fontsize=14.)
-hoverplot = ax.plot([],[])
+hoverline = ax.plot([],[], "C1-", alpha=0.4, linewidth=1.2)
+hoverplot = ax.plot([],[], markersize=7, marker = "o", color="k", alpha=0.8)
 
 sax = plt.axes([0.65, 0.2, 0.32, 0.75])
-sax.set_ylim(-2500., -500.)
-
 sax.set_title("")
 sax.set_xlabel(r"tracer concentration [kg/m$^{3}$]")
 sax.set_ylabel(r"depth [m]")
@@ -61,7 +67,12 @@ ax.grid(alpha=0.2)
 ax.set_title("")
 ax.set_ylim(53.5, 57)
 ax.set_xlim(-15.2, -10.305)
+ax.set_yticks(np.arange(53.5, 57.5, 0.5))
+ax.set_yticklabels(np.arange(53.5, 57.5, 0.5))
+
 sax.set_title("")
+sax.set_xlim([0, 1e-11])
+sax.set_ylim(-2500., -500.)
 
 class PatternCanvas:
 	def __init__(self, fig):
@@ -69,12 +80,10 @@ class PatternCanvas:
 		self.ax = ax
 		self.sax = sax
 		self.cax = cax
-		self.hoverplot = hoverplot
 		self.paused = False
+		self.logscale = False
 
 		self.last_xy = release
-		self.cast_duration = 5.
-		self.speed = 5./86400.
 
 		self.cast_num = 0
 		self.elapsed_time = 0.
@@ -93,7 +102,7 @@ class PatternCanvas:
 			x = event.xdata
 			y = event.ydata
 			self.cast_num += 1
-			self.elapsed_time += self.cast_duration + self.speed*self.steaming_distance(x,y)
+			self.elapsed_time += cast_duration + ship_speed*self.steaming_distance(x,y)
 			print(f"Cast {self.cast_num}: ({np.round(x,3)}, {np.round(y,3)})")
 
 			ann.set_text(f"elapsed time: {round(self.elapsed_time/24.,1)} days")
@@ -110,13 +119,13 @@ class PatternCanvas:
 				linewidths = 0.75,
 				norm = matplotlib.colors.LogNorm(vmin=3e-12, vmax=3e-9)
 			)
-			ax.plot([self.last_xy[0], x],[self.last_xy[1], y], "C1-", alpha=0.5, linewidth=1.25)
+			ax.plot([self.last_xy[0], x],[self.last_xy[1], y], "C1-", alpha=0.6, linewidth=1.25)
 			sample["c"].plot(ax=self.sax, y="Z")
 			self.sax.set_title("")
 			self.sax.set_xlabel(r"tracer concentration [kg/m$^{3}$]")
 			self.sax.set_ylabel(r"depth [m]")
 
-			self.ax.set_title(f"You have {N-self.cast_num} casts left!", loc="left")
+			self.ax.set_title(f"You have {N-self.cast_num} casts left!", loc="left", fontsize=14)
 
 			sample_dict = {
 				"castnum": self.cast_num*xr.ones_like(sample["c"], dtype="int64"),
@@ -138,30 +147,38 @@ class PatternCanvas:
 		if event.inaxes == self.ax:
 			self.hovering = (event.xdata, event.ydata)
 			
-			self.hoverplot[0].remove()
-			self.hoverplot = self.ax.plot(
-				self.hovering[0],
-				self.hovering[1],
-				markersize=14,
-				marker = "+",
-				color="k",
-				alpha=0.8
-			)
-			plt.pause(0.0002)
+			hoverplot[0].set_data([self.hovering[0], self.hovering[1]])
+			hoverline[0].set_data([self.last_xy[0], self.hovering[0]],[self.last_xy[1], self.hovering[1]])
+			plt.pause(0.00002)
 
 	def onkey(self, event):
-		if event.key == 'p':
+		if event.key == "p":
 			if self.paused:
 				print("Resuming.")
 			else:
 				print("Pausing.")
 			self.paused = ~self.paused
+		if event.key == "u":
+			if ~self.logscale:
+				sax.set_xscale("log")
+				sax.set_xlim([1e-15, 1e-11])
+			else:
+				sax.set_xscale("linear")
+				sax.set_xlim([0, 1e-11])
+			self.logscale = ~self.logscale
+			plt.draw()
 
 	def onclose(self, event):
 		self.disconnect()
 
 	def end(self):
-		pc.set(alpha=1.0)
+		if show_solution:
+			pc.set(alpha=1.0)
+		try:
+			hoverline[0].remove()
+			hoverplot[0].remove()
+		except:
+			pass
 		self.disconnect()
 
 		_name = name.replace(".", "").replace(" ", "_")
@@ -191,8 +208,8 @@ class PatternCanvas:
 
 	def disconnect(self):
 		self.fig.canvas.mpl_disconnect(self.cid_button)
-		self.fig.canvas.mpl_disconnect(self.cid_key)
 		self.fig.canvas.mpl_disconnect(self.cid_close)
+		self.fig.canvas.mpl_disconnect(self.cid_hover)
 
 pattern = PatternCanvas(fig)
 pattern.connect()
