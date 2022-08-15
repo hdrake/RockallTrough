@@ -7,11 +7,10 @@ import pandas as pd
 
 from utils import *
 
-
 # Input parameters
 cast_duration = 5.
 ship_speed = 5./86400.
-show_solution = False
+show_solution = True
 
 #
 ds = load_all_data()
@@ -137,11 +136,12 @@ class PatternCanvas:
 			sample_df = pd.DataFrame(data=sample_dict)
 			self.df = self.df.append(sample_df)
 			self.last_xy = (x,y)
-			plt.pause(0.001)
+			plt.pause(0.005)
 
 			if self.cast_num==N:
+				print("End")
 				self.end()
-				plt.pause(0.002)
+				plt.pause(0.01)
 
 	def onhover(self, event):
 		if event.inaxes == self.ax:
@@ -149,7 +149,7 @@ class PatternCanvas:
 			
 			hoverplot[0].set_data([self.hovering[0], self.hovering[1]])
 			hoverline[0].set_data([self.last_xy[0], self.hovering[0]],[self.last_xy[1], self.hovering[1]])
-			plt.pause(0.00002)
+			plt.pause(0.005)
 
 	def onkey(self, event):
 		if event.key == "p":
